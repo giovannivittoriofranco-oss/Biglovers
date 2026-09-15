@@ -1,0 +1,17 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Leitor</title><link rel="stylesheet" href="style.css"><script src="app.js"></script><script src="db.js"></script></head><body class="reader-page"><header class="top reader-top"><button class="iconbtn" onclick="back()">←</button><div><h1 id="title">Leitor</h1><small id="meta" class="muted"></small></div><div class="reader-controls"><select id="mode" onchange="renderReader()"><option value="webtoon">Webtoon</option><option value="vertical">Coluna</option><option value="single">Página</option><option value="spread">Lado a lado</option></select><button class="iconbtn" onclick="zoom(-1)">−</button><button class="iconbtn" onclick="zoom(1)">＋</button></div></header><main id="reader" class="reader-stage"></main><div id="loading" class="reader-loading">Carregando capítulo…</div>
+<script type="module">
+import * as pdfjsLib from './vendor/pdfjs/pdf.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc='./vendor/pdfjs/pdf.worker.mjs';
+const qs=new URLSearchParams(location.search),wId=Number(qs.get('work')),cId=Number(qs.get('chapter'));let work,c,zoomLevel=1,pages=[];
+const $=id=>document.getElementById(id);
+window.zoom=(d)=>{zoomLevel=Math.max(.6,Math.min(2.2,zoomLevel+d*.1));renderReader()};
+window.renderReader=renderReader;
+async function init(){work=await dbGet('works',wId);c=work?.chapters?.find(x=>x.id===cId);if(!c){$('loading').textContent='Capítulo não encontrado.';return} $('title').textContent=c.title;$('meta').textContent=`${work.title} · ${c.kind}`;$('mode').value=c.mode||'webtoon';if(c.kind==='text')renderText();else if(c.kind==='images'){pages=c.images||[];renderImages()}else await renderPDF();$('loading').style.display='none'}
+function commonStyle(){const width=(c.pageWidth||100)+'%';document.documentElement.style.setProperty('--reader-width',width);document.documentElement.style.setProperty('--reader-gap',(c.gap||0)+'px')}
+function renderText(){commonStyle();$('reader').className='reader-stage text-reader';$('reader').innerHTML=`<article class="novel-reader" style="font-family:${c.font||'Literata'};font-size:${c.fontSize||18}px"><h2>${esc(c.title)}</h2><div>${esc(c.text).replace(/\n/g,'<br>')}</div></article>`}
+async function renderPDF(){const res=await fetch(c.pdf);const data=await res.arrayBuffer();const doc=await pdfjsLib.getDocument({data}).promise;pages=[];for(let i=1;i<=doc.numPages;i++){const p=await doc.getPage(i);const viewport=p.getViewport({scale:1.5});const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d');canvas.width=viewport.width;canvas.height=viewport.height;await p.render({canvasContext:ctx,viewport}).promise;pages.push(canvas.toDataURL('image/jpeg',.92))}renderImages()}
+function renderImages(){commonStyle();renderReader()}
+function renderReader(){if(c.kind==='text'){renderText();return}const m=$('mode').value;let arr=pages.map((src,i)=>`<div class="page-shell" data-index="${i}"><img src="${src}" alt="Página ${i+1}" style="transform:scale(${zoomLevel})"></div>`);let body='';if(m==='spread'){body=`<div class="spread-reader">${arr.join('')}</div>`}else{body=`<div class="page-list ${m==='webtoon'?'webtoon-list':''}">${arr.join('')}</div>`}$('reader').className='reader-stage '+m;$('reader').innerHTML=body}
+init();
+function esc(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+</script></body></html>
