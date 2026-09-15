@@ -1,17 +1,139 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Leitor</title><link rel="stylesheet" href="style.css"><script src="app.js"></script><script src="db.js"></script></head><body class="reader-page"><header class="top reader-top"><button class="iconbtn" onclick="back()">←</button><div><h1 id="title">Leitor</h1><small id="meta" class="muted"></small></div><div class="reader-controls"><select id="mode" onchange="renderReader()"><option value="webtoon">Webtoon</option><option value="vertical">Coluna</option><option value="single">Página</option><option value="spread">Lado a lado</option></select><button class="iconbtn" onclick="zoom(-1)">−</button><button class="iconbtn" onclick="zoom(1)">＋</button></div></header><main id="reader" class="reader-stage"></main><div id="loading" class="reader-loading">Carregando capítulo…</div>
-<script type="module">
-import * as pdfjsLib from './vendor/pdfjs/pdf.mjs';
-pdfjsLib.GlobalWorkerOptions.workerSrc='./vendor/pdfjs/pdf.worker.mjs';
-const qs=new URLSearchParams(location.search),wId=Number(qs.get('work')),cId=Number(qs.get('chapter'));let work,c,zoomLevel=1,pages=[];
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Leitor</title>
+<link rel="stylesheet" href="style.css">
+<script src="app.js"></script>
+<script src="db.js"></script>
+</head>
+<body class="reader-page">
+<header class="top reader-top">
+<button class="iconbtn" onclick="back()">←</button>
+<div><h1 id="title">Leitor</h1><small id="meta" class="muted"></small></div>
+<div class="reader-controls">
+<select id="mode" onchange="renderReader()">
+<option value="webtoon">Webtoon</option><option value="vertical">Coluna</option>
+<option value="single">Página</option><option value="spread">Lado a lado</option>
+</select>
+<button class="iconbtn" onclick="zoom(-1)">−</button>
+<button class="iconbtn" onclick="zoom(1)">＋</button>
+</div>
+</header>
+<main id="reader" class="reader-stage"></main>
+<div id="loading" class="reader-loading">Carregando capítulo…</div>
+
+<script>
+const qs=new URLSearchParams(location.search);
+const wId=Number(qs.get('work')), cId=Number(qs.get('chapter'));
+let work=null,c=null,zoomLevel=1,pages=[],pdfjsLib=null;
 const $=id=>document.getElementById(id);
-window.zoom=(d)=>{zoomLevel=Math.max(.6,Math.min(2.2,zoomLevel+d*.1));renderReader()};
+
+window.zoom=d=>{
+  zoomLevel=Math.max(.6,Math.min(2.2,zoomLevel+d*.1));
+  renderReader();
+};
 window.renderReader=renderReader;
-async function init(){work=await dbGet('works',wId);c=work?.chapters?.find(x=>x.id===cId);if(!c){$('loading').textContent='Capítulo não encontrado.';return} $('title').textContent=c.title;$('meta').textContent=`${work.title} · ${c.kind}`;$('mode').value=c.mode||'webtoon';if(c.kind==='text')renderText();else if(c.kind==='images'){pages=c.images||[];renderImages()}else await renderPDF();$('loading').style.display='none'}
-function commonStyle(){const width=(c.pageWidth||100)+'%';document.documentElement.style.setProperty('--reader-width',width);document.documentElement.style.setProperty('--reader-gap',(c.gap||0)+'px')}
-function renderText(){commonStyle();$('reader').className='reader-stage text-reader';$('reader').innerHTML=`<article class="novel-reader" style="font-family:${c.font||'Literata'};font-size:${c.fontSize||18}px"><h2>${esc(c.title)}</h2><div>${esc(c.text).replace(/\n/g,'<br>')}</div></article>`}
-async function renderPDF(){const res=await fetch(c.pdf);const data=await res.arrayBuffer();const doc=await pdfjsLib.getDocument({data}).promise;pages=[];for(let i=1;i<=doc.numPages;i++){const p=await doc.getPage(i);const viewport=p.getViewport({scale:1.5});const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d');canvas.width=viewport.width;canvas.height=viewport.height;await p.render({canvasContext:ctx,viewport}).promise;pages.push(canvas.toDataURL('image/jpeg',.92))}renderImages()}
-function renderImages(){commonStyle();renderReader()}
-function renderReader(){if(c.kind==='text'){renderText();return}const m=$('mode').value;let arr=pages.map((src,i)=>`<div class="page-shell" data-index="${i}"><img src="${src}" alt="Página ${i+1}" style="transform:scale(${zoomLevel})"></div>`);let body='';if(m==='spread'){body=`<div class="spread-reader">${arr.join('')}</div>`}else{body=`<div class="page-list ${m==='webtoon'?'webtoon-list':''}">${arr.join('')}</div>`}$('reader').className='reader-stage '+m;$('reader').innerHTML=body}
+
+async function init(){
+  try{
+    work=await dbGet('works',wId);
+    if(!work) throw new Error('Obra não encontrada.');
+    c=work.chapters?.find(x=>Number(x.id)===cId);
+    if(!c) throw new Error('Capítulo não encontrado.');
+
+    $('title').textContent=c.title||'Capítulo';
+    $('meta').textContent=`${work.title} · ${c.kind}`;
+    $('mode').value=c.mode||'webtoon';
+
+    if(c.kind==='text'){
+      renderText();
+    }else if(c.kind==='images'){
+      pages=c.images||[];
+      if(!pages.length) throw new Error('Este capítulo não possui páginas.');
+      renderImages();
+    }else if(c.kind==='pdf'){
+      await renderPDF();
+    }else{
+      throw new Error('Formato de capítulo não reconhecido.');
+    }
+
+    $('loading').style.display='none';
+  }catch(error){
+    console.error(error);
+    $('loading').textContent='Não foi possível abrir o capítulo.';
+  }
+}
+
+function commonStyle(){
+  document.documentElement.style.setProperty('--reader-width',(c.pageWidth||100)+'%');
+  document.documentElement.style.setProperty('--reader-gap',(c.gap||0)+'px');
+}
+
+function renderText(){
+  commonStyle();
+  $('reader').className='reader-stage text-reader';
+  $('reader').innerHTML=`<article class="novel-reader" style="font-family:${esc(c.font||'Literata')};font-size:${c.fontSize||18}px"><h2>${esc(c.title)}</h2><div>${esc(c.text||'').replace(/\n/g,'<br>')}</div></article>`;
+}
+
+async function renderPDF(){
+  if(!c.pdf) throw new Error('PDF não encontrado.');
+
+  try{
+    const module=await import('./vendor/pdfjs/pdf.mjs');
+    pdfjsLib=module;
+    pdfjsLib.GlobalWorkerOptions.workerSrc='./vendor/pdfjs/pdf.worker.mjs';
+  }catch(error){
+    throw new Error('PDF.js não foi encontrado no aplicativo.');
+  }
+
+  const res=await fetch(c.pdf);
+  if(!res.ok) throw new Error('Não foi possível carregar o PDF.');
+
+  const data=await res.arrayBuffer();
+  const doc=await pdfjsLib.getDocument({data}).promise;
+  pages=[];
+
+  for(let i=1;i<=doc.numPages;i++){
+    const p=await doc.getPage(i);
+    const viewport=p.getViewport({scale:1.5});
+    const canvas=document.createElement('canvas');
+    const ctx=canvas.getContext('2d');
+    canvas.width=viewport.width;
+    canvas.height=viewport.height;
+    await p.render({canvasContext:ctx,viewport}).promise;
+    pages.push(canvas.toDataURL('image/jpeg',.92));
+  }
+
+  if(!pages.length) throw new Error('O PDF não possui páginas.');
+  renderImages();
+}
+
+function renderImages(){
+  commonStyle();
+  renderReader();
+}
+
+function renderReader(){
+  if(!c) return;
+  if(c.kind==='text'){ renderText(); return; }
+
+  const m=$('mode').value;
+  const arr=pages.map((src,i)=>`<div class="page-shell" data-index="${i}"><img src="${src}" alt="Página ${i+1}" style="transform:scale(${zoomLevel})"></div>`);
+  let body=m==='spread'
+    ? `<div class="spread-reader">${arr.join('')}</div>`
+    : `<div class="page-list ${m==='webtoon'?'webtoon-list':''}">${arr.join('')}</div>`;
+
+  $('reader').className='reader-stage '+m;
+  $('reader').innerHTML=body;
+}
+
+function esc(s=''){
+  return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
 init();
-function esc(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-</script></body></html>
+</script>
+</body>
+</html>
