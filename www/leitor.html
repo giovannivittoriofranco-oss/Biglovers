@@ -8,132 +8,874 @@
 <script src="app.js"></script>
 <script src="db.js"></script>
 </head>
+
 <body class="reader-page">
+
 <header class="top reader-top">
 <button class="iconbtn" onclick="back()">←</button>
-<div><h1 id="title">Leitor</h1><small id="meta" class="muted"></small></div>
+
+<div>
+<h1 id="title">Leitor</h1>
+<small id="meta" class="muted"></small>
+</div>
+
 <div class="reader-controls">
 <select id="mode" onchange="renderReader()">
-<option value="webtoon">Webtoon</option><option value="vertical">Coluna</option>
-<option value="single">Página</option><option value="spread">Lado a lado</option>
+<option value="webtoon">Webtoon</option>
+<option value="vertical">Coluna</option>
+<option value="single">Página</option>
+<option value="spread">Lado a lado</option>
 </select>
+
 <button class="iconbtn" onclick="zoom(-1)">−</button>
 <button class="iconbtn" onclick="zoom(1)">＋</button>
 </div>
 </header>
+
 <main id="reader" class="reader-stage"></main>
-<div id="loading" class="reader-loading">Carregando capítulo…</div>
+
+<div id="loading" class="reader-loading">
+Carregando capítulo…
+</div>
+
 
 <script>
+
 const qs=new URLSearchParams(location.search);
-const wId=Number(qs.get('work')), cId=Number(qs.get('chapter'));
-let work=null,c=null,zoomLevel=1,pages=[],pdfjsLib=null;
+
+const wId=Number(qs.get('work'));
+const cId=Number(qs.get('chapter'));
+
+let work=null;
+let c=null;
+
+let pdfjsLib=null;
+let pdfDoc=null;
+
+let totalPages=0;
+let zoomLevel=1;
+
+let observer=null;
+let renderedPages=new Map();
+
 const $=id=>document.getElementById(id);
 
+
+/* =========================
+   ZOOM
+========================= */
+
 window.zoom=d=>{
-  zoomLevel=Math.max(.6,Math.min(2.2,zoomLevel+d*.1));
-  renderReader();
+
+  zoomLevel=Math.max(
+    .6,
+    Math.min(2.2,zoomLevel+d*.1)
+  );
+
+  document.documentElement.style.setProperty(
+    '--reader-zoom',
+    zoomLevel
+  );
+
 };
+
+
+/* =========================
+   LEITOR
+========================= */
+
 window.renderReader=renderReader;
 
-async function init(){
-  try{
-    work=await dbGet('works',wId);
-    if(!work) throw new Error('Obra não encontrada.');
-    c=work.chapters?.find(x=>Number(x.id)===cId);
-    if(!c) throw new Error('Capítulo não encontrado.');
 
-    $('title').textContent=c.title||'Capítulo';
-    $('meta').textContent=`${work.title} · ${c.kind}`;
-    $('mode').value=c.mode||'webtoon';
+/* =========================
+   INICIALIZAÇÃO
+========================= */
+
+async function init(){
+
+  try{
+
+    work=await dbGet('works',wId);
+
+    if(!work)
+      throw new Error('Obra não encontrada.');
+
+    c=work.chapters?.find(
+      x=>Number(x.id)===cId
+    );
+
+    if(!c)
+      throw new Error('Capítulo não encontrado.');
+
+    $('title').textContent=
+      c.title||'Capítulo';
+
+    $('meta').textContent=
+      `${work.title} · ${c.kind}`;
+
+    $('mode').value=
+      c.mode||'webtoon';
+
+
+    /* NOVEL */
 
     if(c.kind==='text'){
+
       renderText();
-    }else if(c.kind==='images'){
-      pages=c.images||[];
-      if(!pages.length) throw new Error('Este capítulo não possui páginas.');
-      renderImages();
-    }else if(c.kind==='pdf'){
-      await renderPDF();
-    }else{
-      throw new Error('Formato de capítulo não reconhecido.');
+
+      $('loading').style.display='none';
+
+      return;
     }
 
-    $('loading').style.display='none';
+
+    /* IMAGENS */
+
+    if(c.kind==='images'){
+
+      pages=c.images||[];
+
+      if(!pages.length)
+        throw new Error(
+          'Este capítulo não possui páginas.'
+        );
+
+      renderImages();
+
+      $('loading').style.display='none';
+
+      return;
+    }
+
+
+    /* PDF */
+
+    if(c.kind==='pdf'){
+
+      await renderPDF();
+
+      $('loading').style.display='none';
+
+      return;
+    }
+
+
+    throw new Error(
+      'Formato de capítulo não reconhecido.'
+    );
+
   }catch(error){
+
     console.error(error);
-    $('loading').textContent='Não foi possível abrir o capítulo.';
+
+    $('loading').textContent=
+      'Não foi possível abrir o capítulo.';
+
   }
+
 }
+
+
+/* =========================
+   ESTILO
+========================= */
 
 function commonStyle(){
-  document.documentElement.style.setProperty('--reader-width',(c.pageWidth||100)+'%');
-  document.documentElement.style.setProperty('--reader-gap',(c.gap||0)+'px');
+
+  document.documentElement.style.setProperty(
+    '--reader-width',
+    (c.pageWidth||100)+'%'
+  );
+
+  document.documentElement.style.setProperty(
+    '--reader-gap',
+    (c.gap||0)+'px'
+  );
+
 }
+
+
+/* =========================
+   TEXTO
+========================= */
 
 function renderText(){
+
   commonStyle();
-  $('reader').className='reader-stage text-reader';
-  $('reader').innerHTML=`<article class="novel-reader" style="font-family:${esc(c.font||'Literata')};font-size:${c.fontSize||18}px"><h2>${esc(c.title)}</h2><div>${esc(c.text||'').replace(/\n/g,'<br>')}</div></article>`;
+
+  $('reader').className=
+    'reader-stage text-reader';
+
+  $('reader').innerHTML=`
+
+    <article
+      class="novel-reader"
+      style="
+        font-family:${esc(c.font||'Literata')};
+        font-size:${c.fontSize||18}px
+      "
+    >
+
+      <h2>${esc(c.title)}</h2>
+
+      <div>
+        ${esc(c.text||'').replace(/\n/g,'<br>')}
+      </div>
+
+    </article>
+
+  `;
+
 }
 
-async function renderPDF(){
-  if(!c.pdf) throw new Error('PDF não encontrado.');
+
+/* =========================
+   PDF.JS
+========================= */
+
+async function loadPDFJS(){
+
+  if(pdfjsLib)
+    return;
 
   try{
-    const module=await import('./vendor/pdfjs/pdf.mjs');
+
+    const module=
+      await import(
+        './vendor/pdfjs/pdf.mjs'
+      );
+
     pdfjsLib=module;
-    pdfjsLib.GlobalWorkerOptions.workerSrc='./vendor/pdfjs/pdf.worker.mjs';
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc=
+      './vendor/pdfjs/pdf.worker.mjs';
+
   }catch(error){
-    throw new Error('PDF.js não foi encontrado no aplicativo.');
+
+    console.error(error);
+
+    throw new Error(
+      'PDF.js não foi encontrado no aplicativo.'
+    );
+
   }
+
+}
+
+
+/* =========================
+   ABRIR PDF
+========================= */
+
+async function renderPDF(){
+
+  if(!c.pdf)
+    throw new Error(
+      'PDF não encontrado.'
+    );
+
+
+  await loadPDFJS();
+
+
+  /*
+    IMPORTANTE:
+
+    Não renderizamos todas as páginas.
+
+    O PDF é aberto primeiro.
+    As páginas são renderizadas somente
+    quando entram perto da tela.
+  */
 
   const res=await fetch(c.pdf);
-  if(!res.ok) throw new Error('Não foi possível carregar o PDF.');
 
-  const data=await res.arrayBuffer();
-  const doc=await pdfjsLib.getDocument({data}).promise;
-  pages=[];
+  if(!res.ok)
+    throw new Error(
+      'Não foi possível carregar o PDF.'
+    );
 
-  for(let i=1;i<=doc.numPages;i++){
-    const p=await doc.getPage(i);
-    const viewport=p.getViewport({scale:1.5});
-    const canvas=document.createElement('canvas');
-    const ctx=canvas.getContext('2d');
-    canvas.width=viewport.width;
-    canvas.height=viewport.height;
-    await p.render({canvasContext:ctx,viewport}).promise;
-    pages.push(canvas.toDataURL('image/jpeg',.92));
-  }
 
-  if(!pages.length) throw new Error('O PDF não possui páginas.');
-  renderImages();
+  const data=
+    await res.arrayBuffer();
+
+
+  pdfDoc=
+    await pdfjsLib
+      .getDocument({
+        data:data
+      })
+      .promise;
+
+
+  totalPages=
+    pdfDoc.numPages;
+
+
+  if(!totalPages)
+    throw new Error(
+      'O PDF não possui páginas.'
+    );
+
+
+  renderPDFStructure();
+
 }
 
-function renderImages(){
+
+/* =========================
+   ESTRUTURA DO PDF
+========================= */
+
+function renderPDFStructure(){
+
   commonStyle();
-  renderReader();
-}
 
-function renderReader(){
-  if(!c) return;
-  if(c.kind==='text'){ renderText(); return; }
+
+  if(observer)
+    observer.disconnect();
+
+
+  renderedPages.clear();
+
 
   const m=$('mode').value;
-  const arr=pages.map((src,i)=>`<div class="page-shell" data-index="${i}"><img src="${src}" alt="Página ${i+1}" style="transform:scale(${zoomLevel})"></div>`);
-  let body=m==='spread'
-    ? `<div class="spread-reader">${arr.join('')}</div>`
-    : `<div class="page-list ${m==='webtoon'?'webtoon-list':''}">${arr.join('')}</div>`;
 
-  $('reader').className='reader-stage '+m;
-  $('reader').innerHTML=body;
+
+  $('reader').className=
+    'reader-stage '+m;
+
+
+  let container;
+
+
+  if(m==='spread'){
+
+    container=
+      document.createElement('div');
+
+    container.className=
+      'spread-reader';
+
+  }else{
+
+    container=
+      document.createElement('div');
+
+    container.className=
+      'page-list '+
+      (m==='webtoon'
+        ?'webtoon-list'
+        :''
+      );
+
+  }
+
+
+  /*
+    Criamos apenas espaços leves
+    para as páginas.
+
+    Nenhum canvas é criado aqui.
+  */
+
+  for(
+    let i=1;
+    i<=totalPages;
+    i++
+  ){
+
+    const shell=
+      document.createElement('div');
+
+    shell.className=
+      'page-shell';
+
+    shell.dataset.index=
+      String(i-1);
+
+    shell.dataset.page=
+      String(i);
+
+
+    /*
+      A página fica como espaço vazio
+      até chegar perto da tela.
+    */
+
+    shell.innerHTML=`
+
+      <div
+        class="pdf-page-placeholder"
+        data-page="${i}"
+      >
+        <span>Carregando página…</span>
+      </div>
+
+    `;
+
+
+    container.appendChild(shell);
+
+  }
+
+
+  $('reader').appendChild(container);
+
+
+  /*
+    Observa quais páginas estão próximas
+    da área visível.
+  */
+
+  observer=
+    new IntersectionObserver(
+      entries=>{
+
+        for(const entry of entries){
+
+          if(
+            entry.isIntersecting
+          ){
+
+            const shell=
+              entry.target;
+
+            const page=
+              Number(shell.dataset.page);
+
+            renderPDFPage(
+              page,
+              shell
+            );
+
+          }
+
+        }
+
+      },
+      {
+        root:null,
+
+        /*
+          Começa a preparar páginas
+          antes de chegarem à tela.
+        */
+
+        rootMargin:
+          '900px 0px 900px 0px',
+
+        threshold:0
+      }
+    );
+
+
+  document
+    .querySelectorAll(
+      '#reader .page-shell'
+    )
+    .forEach(shell=>{
+
+      observer.observe(shell);
+
+    });
+
+
+  /*
+    Garante que as primeiras páginas
+    comecem imediatamente.
+  */
+
+  const first=
+    document.querySelectorAll(
+      '#reader .page-shell'
+    );
+
+
+  for(
+    let i=0;
+    i<Math.min(3,first.length);
+    i++
+  ){
+
+    renderPDFPage(
+      i+1,
+      first[i]
+    );
+
+  }
+
 }
+
+
+/* =========================
+   RENDERIZAR UMA PÁGINA
+========================= */
+
+async function renderPDFPage(
+  pageNumber,
+  shell
+){
+
+  /*
+    Evita renderizar a mesma página
+    várias vezes.
+  */
+
+  if(
+    renderedPages.has(pageNumber)
+  )
+    return;
+
+
+  renderedPages.set(
+    pageNumber,
+    'loading'
+  );
+
+
+  try{
+
+    const page=
+      await pdfDoc.getPage(
+        pageNumber
+      );
+
+
+    /*
+      Escala moderada.
+
+      Não usamos 1.5 fixo para
+      todas as páginas gigantes.
+    */
+
+    const baseViewport=
+      page.getViewport({
+        scale:1
+      });
+
+
+    let scale=1.25;
+
+
+    /*
+      Em telas pequenas, evita
+      criar imagens gigantes.
+    */
+
+    const maxWidth=
+      Math.min(
+        window.innerWidth*1.5,
+        1400
+      );
+
+
+    if(
+      baseViewport.width>maxWidth
+    ){
+
+      scale=
+        maxWidth/
+        baseViewport.width;
+
+    }
+
+
+    const viewport=
+      page.getViewport({
+        scale:scale
+      });
+
+
+    const canvas=
+      document.createElement(
+        'canvas'
+      );
+
+
+    const ctx=
+      canvas.getContext(
+        '2d',
+        {
+          alpha:false
+        }
+      );
+
+
+    canvas.width=
+      Math.floor(
+        viewport.width
+      );
+
+    canvas.height=
+      Math.floor(
+        viewport.height
+      );
+
+
+    await page.render({
+
+      canvasContext:ctx,
+
+      viewport:viewport
+
+    }).promise;
+
+
+    /*
+      Colocamos a imagem pronta
+      dentro da página.
+
+      Depois o canvas pode ser
+      liberado da referência pesada.
+    */
+
+    const img=
+      document.createElement(
+        'img'
+      );
+
+
+    img.alt=
+      `Página ${pageNumber}`;
+
+
+    img.decoding='async';
+
+
+    img.loading='lazy';
+
+
+    img.style.width=
+      '100%';
+
+
+    img.style.height=
+      'auto';
+
+
+    img.style.display=
+      'block';
+
+
+    img.style.transform=
+      `scale(${zoomLevel})`;
+
+
+    img.src=
+      canvas.toDataURL(
+        'image/jpeg',
+        .88
+      );
+
+
+    const placeholder=
+      shell.querySelector(
+        '.pdf-page-placeholder'
+      );
+
+
+    if(placeholder)
+      placeholder.replaceWith(
+        img
+      );
+
+
+    renderedPages.set(
+      pageNumber,
+      'done'
+    );
+
+
+    /*
+      Libera referências do canvas
+      depois que a imagem foi criada.
+    */
+
+    canvas.width=1;
+    canvas.height=1;
+
+  }catch(error){
+
+    console.error(
+      'Erro na página',
+      pageNumber,
+      error
+    );
+
+
+    renderedPages.delete(
+      pageNumber
+    );
+
+
+    shell.innerHTML=`
+
+      <div
+        class="pdf-page-placeholder"
+      >
+        <span>
+          Não foi possível carregar esta página.
+        </span>
+      </div>
+
+    `;
+
+  }
+
+}
+
+
+/* =========================
+   IMAGENS
+========================= */
+
+let pages=[];
+
+
+function renderImages(){
+
+  commonStyle();
+
+  renderReader();
+
+}
+
+
+/* =========================
+   LEITOR NORMAL
+========================= */
+
+function renderReader(){
+
+  if(!c)
+    return;
+
+
+  if(c.kind==='text'){
+
+    renderText();
+
+    return;
+
+  }
+
+
+  /*
+    PDF
+
+    Não recria todas as imagens.
+
+    Apenas reorganiza a estrutura
+    existente.
+  */
+
+  if(c.kind==='pdf'){
+
+    renderPDFStructure();
+
+    return;
+
+  }
+
+
+  /*
+    IMAGENS
+  */
+
+  const m=
+    $('mode').value;
+
+
+  const arr=
+    pages.map(
+      (src,i)=>`
+
+        <div
+          class="page-shell"
+          data-index="${i}"
+        >
+
+          <img
+            src="${src}"
+            alt="Página ${i+1}"
+            style="
+              transform:scale(${zoomLevel})
+            "
+          >
+
+        </div>
+
+      `
+    );
+
+
+  let body;
+
+
+  if(m==='spread'){
+
+    body=`
+      <div class="spread-reader">
+        ${arr.join('')}
+      </div>
+    `;
+
+  }else{
+
+    body=`
+      <div
+        class="page-list
+        ${m==='webtoon'
+          ?'webtoon-list'
+          :''
+        }"
+      >
+        ${arr.join('')}
+      </div>
+    `;
+
+  }
+
+
+  $('reader').className=
+    'reader-stage '+m;
+
+  $('reader').innerHTML=
+    body;
+
+}
+
+
+/* =========================
+   ESCAPE
+========================= */
 
 function esc(s=''){
-  return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+
+  return String(s).replace(
+    /[&<>"']/g,
+    m=>({
+
+      '&':'&amp;',
+      '<':'&lt;',
+      '>':'&gt;',
+      '"':'&quot;',
+      "'":'&#039;'
+
+    }[m])
+  );
+
 }
 
+
+/* =========================
+   INICIAR
+========================= */
+
 init();
+
 </script>
+
 </body>
-</html>
+  </html>
