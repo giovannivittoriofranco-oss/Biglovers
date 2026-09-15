@@ -1,0 +1,1 @@
+Projeto avançado de simulação do Meu Manhwa. Estrutura pronta para GitHub Actions/Capacitor. As funções online reais exigem configuração de backend e credenciais próprias.
