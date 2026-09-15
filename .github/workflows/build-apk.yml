@@ -25,6 +25,12 @@ jobs:
       - name: Instalar dependências
         run: npm install
 
+      - name: Preparar PDF.js
+        run: |
+          mkdir -p www/vendor/pdfjs
+          cp node_modules/pdfjs-dist/build/pdf.mjs www/vendor/pdfjs/pdf.mjs
+          cp node_modules/pdfjs-dist/build/pdf.worker.mjs www/vendor/pdfjs/pdf.worker.mjs
+
       - name: Criar projeto Android
         run: npx cap add android
 
