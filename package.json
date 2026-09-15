@@ -7,7 +7,8 @@
   },
   "dependencies": {
     "@capacitor/core": "^7.4.3",
-    "@capacitor/android": "^7.4.3"
+    "@capacitor/android": "^7.4.3",
+    "pdfjs-dist": "^6.3.289"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.4.3"
